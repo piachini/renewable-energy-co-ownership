@@ -77,8 +77,3 @@ jobs:
       working-directory: ./blockchain
       run: npx hardhat compile --verbose
     
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v2
-      with:
-        name: blockchain-artifacts
-        path: blockchain/artifacts 
