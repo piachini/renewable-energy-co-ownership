@@ -1,0 +1,40 @@
+{
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.fixAll.eslint": "explicit"
+    },
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "files.eol": "\n",
+    "files.associations": {
+        "*.sol": "solidity"
+    },
+    "solidity.compileUsingRemoteVersion": "v0.8.17",
+    "solidity.defaultCompiler": "remote",
+    "solidity.remappings": [],
+    "solidity.remappingsWindows": [],
+    "solidity.remappingsUnix": [],
+    "solidity.packageDefaultDependenciesDirectory": "node_modules",
+    "solidity.packageDefaultDependenciesContractsDirectory": "src",
+    "solidity.experimentalDiscriminators": true,
+    "typescript.tsdk": "node_modules/typescript/lib",
+    "typescript.enablePromptUseWorkspaceTsdk": true,
+    "eslint.validate": [
+        "javascript",
+        "typescript",
+        "javascriptreact",
+        "typescriptreact"
+    ],
+    "eslint.workingDirectories": [
+        "frontend",
+        "backend"
+    ],
+    "prettier.singleQuote": true,
+    "prettier.trailingComma": "es5",
+    "prettier.printWidth": 100,
+    "prettier.semi": true,
+    "prettier.bracketSpacing": true,
+    "prettier.arrowParens": "avoid",
+    "solidity.formatter": "prettier"
+} 
