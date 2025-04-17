@@ -43,8 +43,3 @@ typechain/
 
 # Temporary files
 *.log
-*.tmp
-*.temp
-
-# Local development
-.local/

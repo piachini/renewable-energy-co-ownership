@@ -1,0 +1,116 @@
+name: CD
+
+on:
+  push:
+    branches: [ main ]
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types:
+      - completed
+
+jobs:
+  deploy-staging:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: build
+        path: .
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Deploy to staging
+      run: |
+        # Deploy backend
+        aws ecs update-service --cluster staging-cluster --service backend-service --force-new-deployment
+        
+        # Deploy frontend
+        aws s3 sync frontend/.next s3://staging-frontend-bucket
+        
+        # Invalidate CloudFront cache
+        aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"
+    
+    - name: Run health checks
+      run: |
+        # Wait for services to be healthy
+        ./scripts/wait-for-healthy.sh ${{ secrets.STAGING_API_URL }}
+        
+        # Run smoke tests
+        npm run test:smoke -- --env=staging
+
+  deploy-production:
+    if: github.ref == 'refs/heads/main'
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: build
+        path: .
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Deploy to production
+      run: |
+        # Deploy backend
+        aws ecs update-service --cluster production-cluster --service backend-service --force-new-deployment
+        
+        # Deploy frontend
+        aws s3 sync frontend/.next s3://production-frontend-bucket
+        
+        # Invalidate CloudFront cache
+        aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"
+    
+    - name: Run health checks
+      run: |
+        # Wait for services to be healthy
+        ./scripts/wait-for-healthy.sh ${{ secrets.PRODUCTION_API_URL }}
+        
+        # Run smoke tests
+        npm run test:smoke -- --env=production
+    
+    - name: Notify on success
+      if: success()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: 'Deployment Successful',
+            body: 'Production deployment completed successfully!',
+            labels: ['deployment', 'production']
+          })
+    
+    - name: Rollback on failure
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: 'Deployment Failed - Rollback Required',
+            body: 'Production deployment failed. Manual rollback required.',
+            labels: ['deployment', 'production', 'rollback']
+          }) 
