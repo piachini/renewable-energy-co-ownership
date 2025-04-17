@@ -31,16 +31,17 @@ jobs:
       working-directory: ./blockchain
       run: npm list
     
-    - name: Run blockchain tests with verbose output
+    - name: Run blockchain tests with coverage
       working-directory: ./blockchain
-      run: npx hardhat test --verbose
+      run: npx hardhat coverage
     
     - name: Upload coverage reports
       uses: codecov/codecov-action@v3
+      if: always()
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: ./blockchain/coverage/lcov.info
-        fail_ci_if_error: true
+        fail_ci_if_error: false
 
   security:
     runs-on: ubuntu-latest
