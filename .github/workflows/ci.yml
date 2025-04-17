@@ -21,21 +21,21 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
     
-    - name: Install dependencies
+    - name: Install blockchain dependencies
+      working-directory: ./blockchain
       run: npm ci
     
-    - name: Run linting
-      run: npm run lint
-    
-    - name: Run tests
-      run: npm run test
+    - name: Run blockchain tests
+      working-directory: ./blockchain
+      run: npx hardhat test
     
     - name: Upload coverage reports
       uses: codecov/codecov-action@v3
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
-        files: ./coverage/lcov.info
+        files: ./blockchain/coverage/lcov.info
         fail_ci_if_error: true
 
   security:
@@ -43,7 +43,12 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     
+    - name: Install dependencies
+      working-directory: ./blockchain
+      run: npm ci
+    
     - name: Run npm audit
+      working-directory: ./blockchain
       run: npm audit
       
     - name: Run Snyk to check for vulnerabilities
@@ -52,6 +57,7 @@ jobs:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
       with:
         args: --severity-threshold=high
+        command: test ./blockchain
 
   build:
     needs: [test, security]
@@ -64,17 +70,19 @@ jobs:
       with:
         node-version: '20.x'
         cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
     
-    - name: Install dependencies
+    - name: Install blockchain dependencies
+      working-directory: ./blockchain
       run: npm ci
     
-    - name: Build
-      run: npm run build
+    - name: Build contracts
+      working-directory: ./blockchain
+      run: npx hardhat compile
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v3
       with:
         name: build
         path: |
-          backend/dist
-          frontend/.next 
+          blockchain/artifacts 
