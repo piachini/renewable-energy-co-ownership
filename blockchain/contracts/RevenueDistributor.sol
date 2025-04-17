@@ -51,6 +51,7 @@ contract RevenueDistributor is Ownable, Pausable, ReentrancyGuard {
     error NoRevenueToDistribute();
     error DistributionAlreadyProcessed();
     error InsufficientBalance();
+    error NotProjectOwner();
 
     constructor(address _assetToken, address _projectRegistry) {
         assetToken = AssetToken(payable(_assetToken));
@@ -112,6 +113,10 @@ contract RevenueDistributor is Ownable, Pausable, ReentrancyGuard {
     function receiveRevenue(uint256 projectId) external payable whenNotPaused {
         if (!_projectExists(projectId)) revert InvalidProject();
         if (msg.value == 0) revert InvalidAmount();
+
+        // Get project details and check ownership
+        (,,,,,, , address owner,) = projectRegistry.getProjectDetails(projectId);
+        if (msg.sender != owner) revert NotProjectOwner();
 
         uint256 totalTokens = assetToken.totalSupply();
         if (totalTokens == 0) revert NoRevenueToDistribute();
