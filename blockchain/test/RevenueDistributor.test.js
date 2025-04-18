@@ -218,10 +218,10 @@ describe("RevenueDistributor", function () {
             const AttackContract = await ethers.getContractFactory("ReentrancyAttacker");
             const attackContract = await AttackContract.deploy(await revenueDistributor.getAddress());
             
-            // Il contratto di attacco tenterà di reclamare i ricavi senza essere verificato KYC
+            // Il contratto di attacco tenterà di reclamare i ricavi senza essere approvato
             await expect(
                 attackContract.attack(0, { value: amount })
-            ).to.be.revertedWithCustomError(revenueDistributor, "InvestorNotVerified");
+            ).to.be.revertedWithCustomError(revenueDistributor, "NotApproved");
         });
     });
 }); 
