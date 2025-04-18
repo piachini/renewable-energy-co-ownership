@@ -43,6 +43,7 @@ contract RevenueDistributor is Ownable, Pausable, ReentrancyGuard {
     error InvalidAmount();
     error NotProjectOwner();
     error InsufficientBalance();
+    error InvestorNotVerified();
 
     constructor(address _projectRegistry, address payable _assetToken) {
         projectRegistry = ProjectRegistry(_projectRegistry);
@@ -106,13 +107,15 @@ contract RevenueDistributor is Ownable, Pausable, ReentrancyGuard {
 
         if (base.status != ProjectRegistry.ProjectStatus.Active) revert InvalidProject();
         if (msg.sender != base.owner) revert NotProjectOwner();
-        if (address(this).balance == 0) revert InsufficientBalance();
+        
+        uint256 balance = address(this).balance;
+        if (balance == 0) revert InsufficientBalance();
 
         uint256 distributionId = distributionCount++;
         Distribution storage distribution = distributions[distributionId];
         distribution.id = distributionId;
         distribution.projectId = projectId;
-        distribution.amount = address(this).balance;
+        distribution.amount = balance;
         distribution.timestamp = block.timestamp;
 
         emit RevenueDistributed(distributionId, projectId, distribution.amount);
@@ -122,6 +125,9 @@ contract RevenueDistributor is Ownable, Pausable, ReentrancyGuard {
         Distribution storage distribution = distributions[distributionId];
         if (distribution.id != distributionId) revert InvalidDistribution();
         if (distribution.claimed[msg.sender]) revert AlreadyClaimed();
+
+        // Verify KYC status
+        if (!projectRegistry.isKYCVerified(msg.sender)) revert InvestorNotVerified();
 
         (
             ,
@@ -152,6 +158,10 @@ contract RevenueDistributor is Ownable, Pausable, ReentrancyGuard {
 
     function unpause() public onlyOwner {
         _unpause();
+    }
+
+    receive() external payable {
+        // Accetta ETH
     }
 
     function getDistributionDetails(uint256 distributionId) external view returns (
