@@ -219,7 +219,7 @@ describe("RevenueDistributor", function () {
             const attackContract = await AttackContract.deploy(await revenueDistributor.getAddress());
             
             await expect(
-                attackContract.attack(0)
+                attackContract.attack(0, { value: amount })
             ).to.be.revertedWithCustomError(revenueDistributor, "InvestorNotVerified");
         });
     });
