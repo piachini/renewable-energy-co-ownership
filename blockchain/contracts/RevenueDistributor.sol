@@ -26,12 +26,14 @@ contract RevenueDistributor is Ownable, Pausable, ReentrancyGuard {
     mapping(uint256 => Distribution) public distributions;
     mapping(uint256 => ProjectFees) public projectFees;
     mapping(uint256 => uint256) public minDistributionAmount;
+    mapping(address => mapping(address => bool)) public approvedClaimers;
     uint256 public distributionCount;
 
     event RevenueDistributed(uint256 indexed distributionId, uint256 indexed projectId, uint256 amount);
     event RevenueClaimed(uint256 indexed distributionId, address indexed investor, uint256 amount);
     event FeesUpdated(uint256 indexed projectId, uint256 distributionFee, address feeRecipient);
     event MinDistributionAmountUpdated(uint256 indexed projectId, uint256 amount);
+    event ClaimerApproved(address indexed investor, address indexed claimer, bool approved);
 
     error InvalidProject();
     error NoRevenue();
@@ -44,6 +46,7 @@ contract RevenueDistributor is Ownable, Pausable, ReentrancyGuard {
     error NotProjectOwner();
     error InsufficientBalance();
     error InvestorNotVerified();
+    error NotApproved();
 
     constructor(address _projectRegistry, address payable _assetToken) {
         projectRegistry = ProjectRegistry(_projectRegistry);
@@ -121,35 +124,71 @@ contract RevenueDistributor is Ownable, Pausable, ReentrancyGuard {
         emit RevenueDistributed(distributionId, projectId, distribution.amount);
     }
 
+    function approve(address claimer, bool approved) external {
+        approvedClaimers[msg.sender][claimer] = approved;
+        emit ClaimerApproved(msg.sender, claimer, approved);
+    }
+
     function claimRevenue(uint256 distributionId) external whenNotPaused nonReentrant {
         Distribution storage distribution = distributions[distributionId];
         if (distribution.id != distributionId) revert InvalidDistribution();
-        if (distribution.claimed[msg.sender]) revert AlreadyClaimed();
+
+        address investor = msg.sender;
+        // If the caller is a contract, it must be approved by the investor
+        if (msg.sender.code.length > 0) {
+            investor = tx.origin;
+            if (!approvedClaimers[investor][msg.sender]) {
+                revert NotApproved();
+            }
+        }
+
+        if (distribution.claimed[investor]) revert AlreadyClaimed();
 
         // Verify KYC status
-        if (!projectRegistry.isKYCVerified(msg.sender)) revert InvestorNotVerified();
-
-        (
-            ,
-            ,
-            ProjectRegistry.ProjectTechnical memory technical
-        ) = projectRegistry.getProjectDetails(distribution.projectId);
+        if (!projectRegistry.isKYCVerified(investor)) revert InvestorNotVerified();
 
         uint256 totalSupply = assetToken.totalSupply();
         if (totalSupply == 0) revert InvalidProject();
 
-        uint256 investorBalance = assetToken.balanceOf(msg.sender);
+        uint256 investorBalance = assetToken.balanceOf(investor);
         if (investorBalance == 0) revert NoRevenue();
 
         uint256 share = (distribution.amount * investorBalance) / totalSupply;
         if (share == 0) revert NoRevenue();
 
-        distribution.claimed[msg.sender] = true;
+        distribution.claimed[investor] = true;
 
+        (bool success, ) = payable(investor).call{value: share}("");
+        if (!success) revert TransferFailed();
+
+        emit RevenueClaimed(distributionId, investor, share);
+    }
+
+    function claimRevenueFor(uint256 distributionId, address investor) external whenNotPaused nonReentrant {
+        Distribution storage distribution = distributions[distributionId];
+        if (distribution.id != distributionId) revert InvalidDistribution();
+        if (!approvedClaimers[investor][msg.sender]) revert NotApproved();
+        if (distribution.claimed[investor]) revert AlreadyClaimed();
+
+        // Verify KYC status
+        if (!projectRegistry.isKYCVerified(investor)) revert InvestorNotVerified();
+
+        uint256 totalSupply = assetToken.totalSupply();
+        if (totalSupply == 0) revert InvalidProject();
+
+        uint256 investorBalance = assetToken.balanceOf(investor);
+        if (investorBalance == 0) revert NoRevenue();
+
+        uint256 share = (distribution.amount * investorBalance) / totalSupply;
+        if (share == 0) revert NoRevenue();
+
+        distribution.claimed[investor] = true;
+
+        // Send ETH to the caller instead of the investor
         (bool success, ) = payable(msg.sender).call{value: share}("");
         if (!success) revert TransferFailed();
 
-        emit RevenueClaimed(distributionId, msg.sender, share);
+        emit RevenueClaimed(distributionId, investor, share);
     }
 
     function pause() public onlyOwner {
@@ -186,12 +225,6 @@ contract RevenueDistributor is Ownable, Pausable, ReentrancyGuard {
     function calculateShare(uint256 distributionId, address investor) external view returns (uint256) {
         Distribution storage distribution = distributions[distributionId];
         if (distribution.id != distributionId) revert InvalidDistribution();
-
-        (
-            ,
-            ,
-            ProjectRegistry.ProjectTechnical memory technical
-        ) = projectRegistry.getProjectDetails(distribution.projectId);
 
         uint256 totalSupply = assetToken.totalSupply();
         if (totalSupply == 0) return 0;

@@ -158,4 +158,14 @@ contract ProjectRegistry is Ownable, Pausable {
         if (projectId >= projectCount) revert ProjectDoesNotExist();
         return projectsTechnical[projectId].tokenAddress;
     }
+
+    function transferProjectOwnership(uint256 projectId, address newOwner) external {
+        if (projectId >= projectCount) revert ProjectDoesNotExist();
+        if (newOwner == address(0)) revert InvalidAddress();
+        
+        ProjectBase storage project = projectsBase[projectId];
+        if (project.owner != msg.sender) revert InvalidAddress();
+        
+        project.owner = newOwner;
+    }
 }
