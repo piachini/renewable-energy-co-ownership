@@ -45,8 +45,11 @@ describe("RevenueDistributor", function () {
         // Create a project
         await projectRegistry.registerProject(
             PROJECT_NAME,
-            5000, // 5MW capacity
-            "Texas, USA"
+            PROJECT_DESCRIPTION,
+            TARGET_AMOUNT,
+            MIN_INVESTMENT,
+            MAX_INVESTMENT,
+            await assetToken.getAddress()
         );
         projectId = 0;
 

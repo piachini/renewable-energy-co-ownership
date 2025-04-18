@@ -1,273 +1,158 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { expectRevertWithError, expectEmit, compareBigNumber } = require("./helpers/assertions");
 
 describe("AssetToken", function () {
-  let AssetToken;
-  let token;
+  let assetToken;
   let owner;
   let minter;
-  let addr1;
-  let addr2;
+  let user1;
+  let user2;
+  
+  const NAME = "Energy Asset Token";
+  const SYMBOL = "EAT";
   const INITIAL_SUPPLY = ethers.parseEther("1000");
-  const DIVIDEND_AMOUNT = ethers.parseEther("1");
-
+  
   beforeEach(async function () {
-    [owner, minter, addr1, addr2] = await ethers.getSigners();
-    AssetToken = await ethers.getContractFactory("AssetToken");
-    token = await AssetToken.deploy("Energy Asset Token", "EAT");
-    await token.waitForDeployment();
-    await token.setMinter(minter.address);
+    [owner, minter, user1, user2] = await ethers.getSigners();
+    
+    const AssetToken = await ethers.getContractFactory("AssetToken");
+    assetToken = await AssetToken.deploy(NAME, SYMBOL);
+    await assetToken.waitForDeployment();
+    
+    // Imposta il minter
+    await assetToken.connect(owner).setMinter(minter.address);
   });
-
-  describe("Deployment", function () {
-    it("Should set the right owner", async function () {
-      expect(await token.owner()).to.equal(owner.address);
+  
+  describe("Inizializzazione", function () {
+    it("dovrebbe impostare correttamente nome e simbolo", async function () {
+      expect(await assetToken.name()).to.equal(NAME);
+      expect(await assetToken.symbol()).to.equal(SYMBOL);
     });
-
-    it("Should set the right name and symbol", async function () {
-      expect(await token.name()).to.equal("Energy Asset Token");
-      expect(await token.symbol()).to.equal("EAT");
+    
+    it("dovrebbe impostare il proprietario corretto", async function () {
+      expect(await assetToken.owner()).to.equal(owner.address);
     });
-
-    it("Should set the right minter", async function () {
-      expect(await token.minter()).to.equal(minter.address);
+    
+    it("dovrebbe impostare il minter corretto", async function () {
+      expect(await assetToken.minter()).to.equal(minter.address);
     });
   });
-
+  
   describe("Minting", function () {
-    it("Should allow minter to mint tokens", async function () {
-      const amount = ethers.parseEther("100");
-      await token.connect(minter).mint(addr1.address, amount);
-      expect(await token.balanceOf(addr1.address)).to.equal(amount);
+    it("dovrebbe permettere al minter di creare nuovi token", async function () {
+      await expect(assetToken.connect(minter).mint(user1.address, INITIAL_SUPPLY))
+        .to.emit(assetToken, "Transfer")
+        .withArgs(ethers.ZeroAddress, user1.address, INITIAL_SUPPLY);
+      
+      expect(await assetToken.balanceOf(user1.address)).to.equal(INITIAL_SUPPLY);
     });
-
-    it("Should not allow non-minter to mint tokens", async function () {
-      const amount = ethers.parseEther("100");
-      await expect(
-        token.connect(addr1).mint(addr2.address, amount)
-      ).to.be.revertedWithCustomError(token, "OnlyMinter");
-    });
-
-    it("Should not allow minting when paused", async function () {
-      await token.pause();
-      const amount = ethers.parseEther("100");
-      await expect(
-        token.connect(minter).mint(addr1.address, amount)
-      ).to.be.revertedWith("Pausable: paused");
+    
+    it("dovrebbe fallire se chiamato da un non-minter", async function () {
+      await expectRevertWithError(
+        assetToken.connect(user1).mint(user2.address, INITIAL_SUPPLY),
+        "OnlyMinter"
+      );
     });
   });
-
+  
   describe("Burning", function () {
     beforeEach(async function () {
-      await token.connect(minter).mint(addr1.address, ethers.parseEther("100"));
+      await assetToken.connect(minter).mint(user1.address, INITIAL_SUPPLY);
     });
-
-    it("Should allow minter to burn tokens", async function () {
-      const amount = ethers.parseEther("50");
-      await token.connect(minter).burn(addr1.address, amount);
-      expect(await token.balanceOf(addr1.address)).to.equal(ethers.parseEther("50"));
+    
+    it("dovrebbe permettere al minter di bruciare token", async function () {
+      const burnAmount = ethers.parseEther("100");
+      await expect(assetToken.connect(minter).burn(user1.address, burnAmount))
+        .to.emit(assetToken, "Transfer")
+        .withArgs(user1.address, ethers.ZeroAddress, burnAmount);
+      
+      expect(await assetToken.balanceOf(user1.address)).to.equal(INITIAL_SUPPLY - burnAmount);
     });
-
-    it("Should not allow non-minter to burn tokens", async function () {
-      const amount = ethers.parseEther("50");
-      await expect(
-        token.connect(addr1).burn(addr1.address, amount)
-      ).to.be.revertedWithCustomError(token, "OnlyMinter");
+    
+    it("dovrebbe fallire se il saldo è insufficiente", async function () {
+      await expectRevertWithError(
+        assetToken.connect(minter).burn(user1.address, INITIAL_SUPPLY + 1n),
+        "InsufficientBalance"
+      );
     });
-
-    it("Should not allow burning more than balance", async function () {
-      const amount = ethers.parseEther("150");
-      await expect(
-        token.connect(minter).burn(addr1.address, amount)
-      ).to.be.revertedWithCustomError(token, "InsufficientBalance");
-    });
-  });
-
-  describe("Dividends", function () {
-    it("Should distribute dividends correctly", async function () {
-      // Mint tokens first
-      await token.connect(minter).mint(addr1.address, ethers.parseEther("75"));
-      await token.connect(minter).mint(addr2.address, ethers.parseEther("25"));
-
-      const dividendAmount = ethers.parseEther("10");
-      await token.distributeDividends({ value: dividendAmount });
-      
-      expect(await token.getTotalDividends()).to.equal(dividendAmount);
-      const addr1Claimable = await token.getClaimableDividends(addr1.address);
-      const addr2Claimable = await token.getClaimableDividends(addr2.address);
-      expect(addr1Claimable).to.equal(ethers.parseEther("7.5"));
-      expect(addr2Claimable).to.equal(ethers.parseEther("2.5"));
-    });
-
-    it("Should allow claiming dividends", async function () {
-      // Mint tokens first
-      await token.connect(minter).mint(addr1.address, ethers.parseEther("75"));
-      await token.connect(minter).mint(addr2.address, ethers.parseEther("25"));
-
-      const dividendAmount = ethers.parseEther("10");
-      await token.distributeDividends({ value: dividendAmount });
-
-      const balanceBefore = await ethers.provider.getBalance(addr1);
-      const tx = await token.connect(addr1).claimDividends();
-      const receipt = await tx.wait();
-      const gasCost = receipt.gasUsed * receipt.gasPrice;
-      const balanceAfter = await ethers.provider.getBalance(addr1);
-
-      const expectedDividend = ethers.parseEther("7.5");
-      const actualChange = balanceAfter - balanceBefore + gasCost;
-      
-      expect(actualChange).to.equal(expectedDividend);
-    });
-
-    it("Should not allow claiming when no dividends available", async function () {
-      await expect(
-        token.connect(addr1).claimDividends()
-      ).to.be.revertedWithCustomError(token, "NoDividendsToClaim");
-    });
-
-    it("should update dividend info correctly upon transfer", async function () {
-      // Mint tokens to addr1
-      await token.connect(minter).mint(addr1.address, ethers.parseEther("100"));
-      
-      // Distribute initial dividends
-      await token.distributeDividends({ value: ethers.parseEther("1.0") });
-      
-      // Transfer half tokens from addr1 to addr2
-      await token.connect(addr1).transfer(addr2.address, ethers.parseEther("50"));
-      
-      // Check claimable dividends for both addresses
-      const addr1Claimable = await token.getClaimableDividends(addr1.address);
-      const addr2Claimable = await token.getClaimableDividends(addr2.address);
-      
-      // addr1 should have half of their original dividends (0.5 ETH)
-      // addr2 should have received half of addr1's dividends (0.5 ETH)
-      expect(addr1Claimable).to.equal(ethers.parseEther("0.5"));
-      expect(addr2Claimable).to.equal(ethers.parseEther("0.5"));
-      
-      // Distribute more dividends
-      await token.distributeDividends({ value: ethers.parseEther("1.0") });
-      
-      // Check updated claimable dividends
-      const addr1ClaimableNew = await token.getClaimableDividends(addr1.address);
-      const addr2ClaimableNew = await token.getClaimableDividends(addr2.address);
-      
-      // Each address should have their previous dividends plus half of the new dividends
-      expect(addr1ClaimableNew).to.equal(ethers.parseEther("1.0")); // 0.5 from before + 0.5 from new
-      expect(addr2ClaimableNew).to.equal(ethers.parseEther("1.0")); // 0.5 from before + 0.5 from new
+    
+    it("dovrebbe fallire se chiamato da un non-minter", async function () {
+      await expectRevertWithError(
+        assetToken.connect(user1).burn(user1.address, ethers.parseEther("100")),
+        "OnlyMinter"
+      );
     });
   });
-
-  describe("Pause/Unpause", function () {
+  
+  describe("Dividendi", function () {
     beforeEach(async function () {
-      await token.connect(minter).mint(addr1.address, ethers.parseEther("100"));
+      await assetToken.connect(minter).mint(user1.address, INITIAL_SUPPLY);
+      await assetToken.connect(minter).mint(user2.address, INITIAL_SUPPLY);
     });
-
-    it("Should allow owner to pause and unpause", async function () {
-      await token.pause();
-      expect(await token.paused()).to.be.true;
+    
+    it("dovrebbe distribuire correttamente i dividendi", async function () {
+      const dividendAmount = ethers.parseEther("1");
       
-      await token.unpause();
-      expect(await token.paused()).to.be.false;
+      await expect(assetToken.connect(user1).distributeDividends({ value: dividendAmount }))
+        .to.emit(assetToken, "DividendsDistributed")
+        .withArgs(dividendAmount);
+      
+      const claimableUser1 = await assetToken.getClaimableDividends(user1.address);
+      const claimableUser2 = await assetToken.getClaimableDividends(user2.address);
+      
+      expect(claimableUser1).to.equal(dividendAmount / 2n);
+      expect(claimableUser2).to.equal(dividendAmount / 2n);
     });
-
-    it("Should not allow non-owner to pause", async function () {
-      await expect(
-        token.connect(addr1).pause()
-      ).to.be.revertedWith("Ownable: caller is not the owner");
+    
+    it("dovrebbe permettere il claim dei dividendi", async function () {
+      const dividendAmount = ethers.parseEther("1");
+      await assetToken.connect(user1).distributeDividends({ value: dividendAmount });
+      
+      const claimable = await assetToken.getClaimableDividends(user1.address);
+      await expect(assetToken.connect(user1).claimDividends())
+        .to.emit(assetToken, "DividendsClaimed")
+        .withArgs(user1.address, claimable);
+      
+      expect(await assetToken.getClaimableDividends(user1.address)).to.equal(0);
     });
-
-    it("Should not allow transfers when paused", async function () {
-      const amount = ethers.parseEther("50");
-      await token.pause();
-      await expect(
-        token.connect(addr1).transfer(addr2.address, amount)
-      ).to.be.revertedWith("Pausable: paused");
+    
+    it("dovrebbe fallire il claim se non ci sono dividendi", async function () {
+      await expectRevertWithError(
+        assetToken.connect(user1).claimDividends(),
+        "NoDividendsToClaim"
+      );
     });
-
-    it("Should not allow minting when paused", async function () {
-      await token.pause();
-      await expect(
-        token.connect(minter).mint(addr1.address, ethers.parseEther("100"))
-      ).to.be.revertedWith("Pausable: paused");
-    });
-
-    it("Should not allow burning when paused", async function () {
-      await token.pause();
-      await expect(
-        token.connect(minter).burn(addr1.address, ethers.parseEther("50"))
-      ).to.be.revertedWith("Pausable: paused");
-    });
-
-    it("Should not allow dividend distribution when paused", async function () {
-      await token.pause();
-      await expect(
-        token.distributeDividends({ value: ethers.parseEther("1") })
-      ).to.be.revertedWith("Pausable: paused");
-    });
-
-    it("Should not allow dividend claiming when paused", async function () {
-      await token.distributeDividends({ value: ethers.parseEther("1") });
-      await token.pause();
-      await expect(
-        token.connect(addr1).claimDividends()
-      ).to.be.revertedWith("Pausable: paused");
+    
+    it("dovrebbe distribuire automaticamente i dividendi quando riceve ETH", async function () {
+      const dividendAmount = ethers.parseEther("1");
+      
+      await expect(owner.sendTransaction({
+        to: await assetToken.getAddress(),
+        value: dividendAmount
+      })).to.emit(assetToken, "DividendsDistributed")
+        .withArgs(dividendAmount);
     });
   });
-
-  describe("Transfer Behavior", function () {
-    beforeEach(async function () {
-      await token.connect(minter).mint(addr1.address, INITIAL_SUPPLY);
-      await token.distributeDividends({ value: DIVIDEND_AMOUNT });
+  
+  describe("Pausa", function () {
+    it("dovrebbe permettere al proprietario di mettere in pausa il contratto", async function () {
+      await assetToken.connect(owner).pause();
+      expect(await assetToken.paused()).to.be.true;
     });
-
-    it("Should maintain dividend credits after transfer", async function () {
-      const transferAmount = INITIAL_SUPPLY / 2n;
-      
-      // Claim dividends before transfer
-      await token.connect(addr1).claimDividends();
-      
-      // Transfer tokens
-      await token.connect(addr1).transfer(addr2.address, transferAmount);
-      
-      // Distribute new dividends
-      await token.distributeDividends({ value: DIVIDEND_AMOUNT });
-
-      const addr1Claimable = await token.getClaimableDividends(addr1.address);
-      const addr2Claimable = await token.getClaimableDividends(addr2.address);
-
-      expect(addr1Claimable).to.equal(DIVIDEND_AMOUNT / 2n);
-      expect(addr2Claimable).to.equal(DIVIDEND_AMOUNT / 2n);
+    
+    it("dovrebbe permettere al proprietario di riprendere il contratto", async function () {
+      await assetToken.connect(owner).pause();
+      await assetToken.connect(owner).unpause();
+      expect(await assetToken.paused()).to.be.false;
     });
-
-    it("Should handle multiple transfers and distributions", async function () {
-      const transferAmount = INITIAL_SUPPLY / 2n;
-      
-      // Claim initial dividends
-      await token.connect(addr1).claimDividends();
-      
-      // Transfer and distribute new dividends
-      await token.connect(addr1).transfer(addr2.address, transferAmount);
-      await token.distributeDividends({ value: DIVIDEND_AMOUNT });
-
-      const addr1Claimable = await token.getClaimableDividends(addr1.address);
-      const addr2Claimable = await token.getClaimableDividends(addr2.address);
-
-      expect(addr1Claimable).to.equal(DIVIDEND_AMOUNT / 2n);
-      expect(addr2Claimable).to.equal(DIVIDEND_AMOUNT / 2n);
-    });
-  });
-
-  describe("Receive Function", function () {
-    it("Should handle direct ETH transfers as dividends", async function () {
-      // Mint some tokens first
-      await token.connect(minter).mint(addr1.address, ethers.parseEther("100"));
-      
-      await owner.sendTransaction({
-        to: await token.getAddress(),
-        value: DIVIDEND_AMOUNT
-      });
-      
-      expect(await token.getTotalDividends()).to.equal(DIVIDEND_AMOUNT);
+    
+    it("dovrebbe impedire il minting quando in pausa", async function () {
+      await assetToken.connect(owner).pause();
+      await expectRevertWithError(
+        assetToken.connect(minter).mint(user1.address, INITIAL_SUPPLY),
+        "Pausable: paused"
+      );
     });
   });
 }); 

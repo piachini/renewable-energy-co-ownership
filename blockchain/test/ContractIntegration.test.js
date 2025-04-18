@@ -46,16 +46,19 @@ describe("Contract Integration", function () {
         // Deploy RevenueDistributor
         RevenueDistributor = await ethers.getContractFactory("RevenueDistributor");
         revenueDistributor = await RevenueDistributor.deploy(
-            await assetToken.getAddress(),
-            await projectRegistry.getAddress()
+            await projectRegistry.getAddress(),
+            await assetToken.getAddress()
         );
         await revenueDistributor.waitForDeployment();
 
         // Register a project
         await projectRegistry.connect(projectOwner).registerProject(
             "Solar Farm Alpha",
-            1000,
-            "Texas, USA"
+            "A solar farm in Texas",
+            ethers.parseEther("1000"),
+            ethers.parseEther("0.1"),
+            ethers.parseEther("100"),
+            await assetToken.getAddress()
         );
         projectId = 0;
 
