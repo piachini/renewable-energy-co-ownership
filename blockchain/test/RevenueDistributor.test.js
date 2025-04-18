@@ -215,7 +215,7 @@ describe("RevenueDistributor", function () {
             await revenueDistributor.receiveRevenue(projectId, { value: amount });
             
             // Try to claim revenue recursively
-            const AttackContract = await ethers.getContractFactory("ReentrancyAttack");
+            const AttackContract = await ethers.getContractFactory("ReentrancyAttacker");
             const attackContract = await AttackContract.deploy(await revenueDistributor.getAddress());
             
             await expect(
