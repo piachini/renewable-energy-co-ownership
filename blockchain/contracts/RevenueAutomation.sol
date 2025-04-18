@@ -140,9 +140,6 @@ contract RevenueAutomation is Ownable, Pausable, ReentrancyGuard {
         uint256 totalAmount = revenueDistributor.calculateShare(distributionId, investor);
         if (totalAmount == 0) revert NoRevenue();
 
-        // Claim revenue for the investor
-        revenueDistributor.claimRevenueFor(distributionId, investor);
-        
         // Calculate amounts based on investor's share
         uint256 reinvestAmount = (totalAmount * projectAutomation[projectId].reinvestPercentage) / 10000;
         uint256 taxAmount = (totalAmount * projectAutomation[projectId].taxWithholding) / 10000;
@@ -150,6 +147,9 @@ contract RevenueAutomation is Ownable, Pausable, ReentrancyGuard {
 
         // Update tax withholding
         investorTaxWithholding[investor][projectId] += taxAmount;
+
+        // Claim revenue for the investor
+        revenueDistributor.claimRevenue(distributionId);
 
         // Transfer tax to recipient
         if (taxAmount > 0) {
