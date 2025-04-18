@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -23,10 +23,11 @@ contract AssetToken is ERC20, Ownable, Pausable {
     error OnlyMinter();
     error NoDividendsToClaim();
     error InsufficientBalance();
+    error NoTokensMinted();
+    error TransferFailed();
 
     constructor(string memory name, string memory symbol) 
         ERC20(name, symbol)
-        Ownable()
     {
         _transferOwnership(msg.sender);
     }
@@ -55,14 +56,11 @@ contract AssetToken is ERC20, Ownable, Pausable {
     }
 
     function distributeDividends() public payable whenNotPaused {
-        require(msg.value > 0, "No ETH sent");
-        require(totalSupply() > 0, "No tokens minted");
+        if (msg.value == 0) revert InsufficientBalance();
+        if (totalSupply() == 0) revert NoTokensMinted();
 
         _totalDividends += msg.value;
-
-        // Distribute dividends based on token count
-        uint256 totalTokens = totalSupply();
-        uint256 dividendPerToken = msg.value * PRECISION / totalTokens;
+        uint256 dividendPerToken = (msg.value * PRECISION) / totalSupply();
         
         for (uint256 i = 0; i < _holders.length; i++) {
             address holder = _holders[i];
@@ -83,7 +81,7 @@ contract AssetToken is ERC20, Ownable, Pausable {
         _lastClaimedDividends[msg.sender] = _totalDividends;
 
         (bool success, ) = payable(msg.sender).call{value: claimable}("");
-        require(success, "Transfer failed");
+        if (!success) revert TransferFailed();
 
         emit DividendsClaimed(msg.sender, claimable);
     }
@@ -117,10 +115,10 @@ contract AssetToken is ERC20, Ownable, Pausable {
                 _isHolder[to] = true;
             }
 
-            // Transfer unclaimed dividends proportionally
-            if (balanceOf(from) > 0) {
+            uint256 fromBalance = balanceOf(from);
+            if (fromBalance > 0) {
                 uint256 unclaimedDividends = _dividendCredits[from];
-                uint256 dividendsToTransfer = (unclaimedDividends * amount) / balanceOf(from);
+                uint256 dividendsToTransfer = (unclaimedDividends * amount) / fromBalance;
                 _dividendCredits[from] = unclaimedDividends - dividendsToTransfer;
                 _dividendCredits[to] += dividendsToTransfer;
             }

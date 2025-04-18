@@ -3,10 +3,11 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./AssetToken.sol";
 import "./ProjectRegistry.sol";
 
-contract InvestmentManager is Ownable, Pausable {
+contract InvestmentManager is Ownable, Pausable, ReentrancyGuard {
     struct Investment {
         uint256 projectId;
         address investor;
@@ -19,6 +20,7 @@ contract InvestmentManager is Ownable, Pausable {
     ProjectRegistry public projectRegistry;
     mapping(uint256 => Investment[]) public projectInvestments;
     mapping(address => mapping(uint256 => uint256)) public investorProjectBalance;
+    mapping(address => mapping(uint256 => uint256)) public totalInvested;
 
     event InvestmentMade(
         uint256 indexed projectId,
@@ -31,6 +33,14 @@ contract InvestmentManager is Ownable, Pausable {
         address indexed investor,
         uint256 amount
     );
+
+    error ProjectNotFound();
+    error ProjectNotActive();
+    error InvestorNotVerified();
+    error InvalidAmount();
+    error AmountBelowMinimum();
+    error AmountAboveMaximum();
+    error InsufficientBalance();
 
     constructor(address _assetToken, address _projectRegistry) {
         assetToken = AssetToken(payable(_assetToken));
@@ -45,79 +55,65 @@ contract InvestmentManager is Ownable, Pausable {
         _unpause();
     }
 
-    function invest(uint256 projectId, uint256 amount) external whenNotPaused {
-        require(amount > 0, "Amount must be greater than 0");
-        require(
-            projectRegistry.isKYCVerified(msg.sender),
-            "Investor not KYC verified"
-        );
+    function makeInvestment(uint256 projectId) external payable whenNotPaused nonReentrant {
+        if (msg.value == 0) revert InvalidAmount();
+        if (!projectRegistry.isKYCVerified(msg.sender)) revert InvestorNotVerified();
 
-        // Verifica che il progetto esista e sia attivo
+        // Verify project exists and is active
         (
-            ,  // id
-            ,  // name
-            ,  // capacity
-            ,  // location
-            ,  // totalInvestment
-            ,  // currentInvestment
-            ProjectRegistry.ProjectStatus status,
-            address owner,
-            // createdAt
+            ProjectRegistry.ProjectBase memory base,
+            ProjectRegistry.ProjectFinancials memory financials,
+            ProjectRegistry.ProjectTechnical memory technical
         ) = projectRegistry.getProjectDetails(projectId);
         
-        require(owner != address(0), "Project does not exist");
-        require(status == ProjectRegistry.ProjectStatus.Active, "Project is not active");
+        if (base.owner == address(0)) revert ProjectNotFound();
+        if (base.status != ProjectRegistry.ProjectStatus.Active) revert ProjectNotActive();
+        
+        // Validate investment amount
+        if (msg.value < financials.minInvestment) revert AmountBelowMinimum();
+        if (msg.value > financials.maxInvestment) revert AmountAboveMaximum();
 
-        // Calculate tokens based on investment amount
-        uint256 tokens = calculateTokens(amount);
-
+        // Calculate tokens
+        uint256 tokens = calculateTokens(msg.value);
+        
         // Record investment
-        projectInvestments[projectId].push(
-            Investment({
-                projectId: projectId,
-                investor: msg.sender,
-                amount: amount,
-                tokens: tokens,
-                timestamp: block.timestamp
-            })
-        );
-
-        // Update investor balance
+        projectInvestments[projectId].push(Investment({
+            projectId: projectId,
+            investor: msg.sender,
+            amount: msg.value,
+            tokens: tokens,
+            timestamp: block.timestamp
+        }));
+        
+        // Update balances
         investorProjectBalance[msg.sender][projectId] += tokens;
-
-        // Mint tokens to investor
+        totalInvested[msg.sender][projectId] += msg.value;
+        
+        // Mint tokens
         assetToken.mint(msg.sender, tokens);
-
-        emit InvestmentMade(projectId, msg.sender, amount, tokens);
+        
+        emit InvestmentMade(projectId, msg.sender, msg.value, tokens);
     }
 
-    function withdrawInvestment(uint256 projectId, uint256 amount) external whenNotPaused {
-        require(amount > 0, "Amount must be greater than 0");
+    function withdrawInvestment(uint256 projectId, uint256 amount) external whenNotPaused nonReentrant {
+        if (amount == 0) revert InvalidAmount();
         
-        // Verifica che il progetto esista
+        // Verify project exists
         (
-            ,  // id
-            ,  // name
-            ,  // capacity
-            ,  // location
-            ,  // totalInvestment
-            ,  // currentInvestment
-            ,  // status
-            address owner,
-            // createdAt
+            ProjectRegistry.ProjectBase memory base,
+            ,  // financials
+            ProjectRegistry.ProjectTechnical memory technical
         ) = projectRegistry.getProjectDetails(projectId);
         
-        require(owner != address(0), "Project does not exist");
-        require(
-            investorProjectBalance[msg.sender][projectId] >= amount,
-            "Insufficient balance"
-        );
+        if (base.owner == address(0)) revert ProjectNotFound();
+        if (investorProjectBalance[msg.sender][projectId] < amount) revert InsufficientBalance();
+
+        // Update balances
+        investorProjectBalance[msg.sender][projectId] -= amount;
+        totalInvested[msg.sender][projectId] -= amount;
 
         // Burn tokens
         assetToken.burn(msg.sender, amount);
-
-        // Update investor balance
-        investorProjectBalance[msg.sender][projectId] -= amount;
 
         emit InvestmentWithdrawn(projectId, msg.sender, amount);
     }
@@ -126,26 +122,22 @@ contract InvestmentManager is Ownable, Pausable {
         external
         view
         returns (
-            uint256 totalInvested,
+            uint256 totalInvestedAmount,
             uint256 tokenBalance,
             uint256 lastInvestmentTime
         )
     {
         Investment[] memory investments = projectInvestments[projectId];
-        uint256 total = 0;
         uint256 lastTime = 0;
 
         for (uint256 i = 0; i < investments.length; i++) {
-            if (investments[i].investor == investor) {
-                total += investments[i].amount;
-                if (investments[i].timestamp > lastTime) {
-                    lastTime = investments[i].timestamp;
-                }
+            if (investments[i].investor == investor && investments[i].timestamp > lastTime) {
+                lastTime = investments[i].timestamp;
             }
         }
 
         return (
-            total,
+            totalInvested[investor][projectId],
             investorProjectBalance[investor][projectId],
             lastTime
         );
@@ -158,47 +150,5 @@ contract InvestmentManager is Ownable, Pausable {
     {
         // Simple 1:1 ratio for now, can be modified based on project valuation
         return amount;
-    }
-
-    function makeInvestment(uint256 projectId) external payable whenNotPaused {
-        require(msg.value > 0, "Investment amount must be greater than 0");
-        
-        // Verifica che il progetto esista e sia attivo
-        (
-            ,  // id
-            ,  // name
-            ,  // capacity
-            ,  // location
-            ,  // totalInvestment
-            ,  // currentInvestment
-            ProjectRegistry.ProjectStatus status,
-            address owner,
-            // createdAt
-        ) = projectRegistry.getProjectDetails(projectId);
-        
-        require(owner != address(0), "Project does not exist");
-        require(status == ProjectRegistry.ProjectStatus.Active, "Project is not active");
-        
-        // Verifica che l'investitore sia verificato KYC
-        require(projectRegistry.isKYCVerified(msg.sender), "Investor not KYC verified");
-        
-        // Calcola i token da emettere
-        uint256 tokens = calculateTokens(msg.value);
-        
-        // Aggiorna gli investimenti
-        projectInvestments[projectId].push(Investment({
-            projectId: projectId,
-            investor: msg.sender,
-            amount: msg.value,
-            tokens: tokens,
-            timestamp: block.timestamp
-        }));
-        
-        investorProjectBalance[msg.sender][projectId] += msg.value;
-        
-        // Emetti i token
-        assetToken.mint(msg.sender, tokens);
-        
-        emit InvestmentMade(projectId, msg.sender, msg.value, tokens);
     }
 }

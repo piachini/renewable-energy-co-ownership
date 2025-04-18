@@ -1,20 +1,31 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 
 contract ProjectRegistry is Ownable, Pausable {
-    struct Project {
+    struct ProjectBase {
         uint256 id;
         string name;
-        uint256 capacity;
-        string location;
-        uint256 totalInvestment;
-        uint256 currentInvestment;
-        ProjectStatus status;
+        string description;
         address owner;
         uint256 createdAt;
+        ProjectStatus status;
+    }
+
+    struct ProjectFinancials {
+        uint256 totalInvestment;
+        uint256 currentInvestment;
+        uint256 targetAmount;
+        uint256 minInvestment;
+        uint256 maxInvestment;
+    }
+
+    struct ProjectTechnical {
+        uint256 capacity;
+        string location;
+        address tokenAddress;
     }
 
     enum ProjectStatus {
@@ -24,24 +35,28 @@ contract ProjectRegistry is Ownable, Pausable {
         Cancelled
     }
 
-    mapping(uint256 => Project) public projects;
+    mapping(uint256 => ProjectBase) public projectsBase;
+    mapping(uint256 => ProjectFinancials) public projectsFinancials;
+    mapping(uint256 => ProjectTechnical) public projectsTechnical;
     mapping(address => bool) public kycVerified;
     uint256 public projectCount;
 
     event ProjectRegistered(uint256 indexed projectId, string name, address owner);
     event ProjectStatusUpdated(uint256 indexed projectId, ProjectStatus status);
     event KYCVerified(address indexed investor);
+    event KYCRevoked(address indexed investor);
 
     error ProjectDoesNotExist();
     error InvalidStatus();
     error ProjectCompleted();
     error InvalidAddress();
     error AlreadyVerified();
+    error NotVerified();
     error EmptyName();
     error EmptyLocation();
     error ZeroCapacity();
-
-    constructor() {}
+    error InvalidInvestmentLimits();
+    error InvalidTokenAddress();
 
     function pause() public onlyOwner {
         _pause();
@@ -52,26 +67,42 @@ contract ProjectRegistry is Ownable, Pausable {
     }
 
     function registerProject(
-        string memory name,
-        uint256 capacity,
-        string memory location
+        string calldata name,
+        string calldata description,
+        uint256 targetAmount,
+        uint256 minInvestment,
+        uint256 maxInvestment,
+        address tokenAddress
     ) external whenNotPaused {
-        // Validate inputs
         if (bytes(name).length == 0) revert EmptyName();
-        if (bytes(location).length == 0) revert EmptyLocation();
-        if (capacity == 0) revert ZeroCapacity();
+        if (bytes(description).length == 0) revert EmptyName();
+        if (targetAmount == 0) revert ZeroCapacity();
+        if (minInvestment == 0 || maxInvestment < minInvestment) revert InvalidInvestmentLimits();
+        if (tokenAddress == address(0)) revert InvalidTokenAddress();
 
         uint256 projectId = projectCount++;
-        projects[projectId] = Project({
+        
+        projectsBase[projectId] = ProjectBase({
             id: projectId,
             name: name,
-            capacity: capacity,
-            location: location,
+            description: description,
+            owner: msg.sender,
+            createdAt: block.timestamp,
+            status: ProjectStatus.Pending
+        });
+
+        projectsFinancials[projectId] = ProjectFinancials({
             totalInvestment: 0,
             currentInvestment: 0,
-            status: ProjectStatus.Pending,
-            owner: msg.sender,
-            createdAt: block.timestamp
+            targetAmount: targetAmount,
+            minInvestment: minInvestment,
+            maxInvestment: maxInvestment
+        });
+
+        projectsTechnical[projectId] = ProjectTechnical({
+            capacity: 0,
+            location: "",
+            tokenAddress: tokenAddress
         });
 
         emit ProjectRegistered(projectId, name, msg.sender);
@@ -81,11 +112,12 @@ contract ProjectRegistry is Ownable, Pausable {
         if (projectId >= projectCount) revert ProjectDoesNotExist();
         if (newStatus >= 4) revert InvalidStatus();
         
-        require(projects[projectId].owner == msg.sender, "Not project owner");
-        require(projects[projectId].status != ProjectStatus.Cancelled, "Project cancelled");
-        if (projects[projectId].status == ProjectStatus.Completed) revert ProjectCompleted();
+        ProjectBase storage project = projectsBase[projectId];
+        if (project.owner != msg.sender) revert InvalidAddress();
+        if (project.status == ProjectStatus.Cancelled) revert ProjectCompleted();
+        if (project.status == ProjectStatus.Completed) revert ProjectCompleted();
 
-        projects[projectId].status = ProjectStatus(newStatus);
+        project.status = ProjectStatus(newStatus);
         emit ProjectStatusUpdated(projectId, ProjectStatus(newStatus));
     }
 
@@ -97,34 +129,33 @@ contract ProjectRegistry is Ownable, Pausable {
         emit KYCVerified(investor);
     }
 
+    function revokeKYC(address investor) external onlyOwner {
+        if (investor == address(0)) revert InvalidAddress();
+        if (!kycVerified[investor]) revert NotVerified();
+        
+        kycVerified[investor] = false;
+        emit KYCRevoked(investor);
+    }
+
     function getProjectDetails(uint256 projectId) external view returns (
-        uint256 id,
-        string memory name,
-        uint256 capacity,
-        string memory location,
-        uint256 totalInvestment,
-        uint256 currentInvestment,
-        ProjectStatus status,
-        address owner,
-        uint256 createdAt
+        ProjectBase memory base,
+        ProjectFinancials memory financials,
+        ProjectTechnical memory technical
     ) {
         if (projectId >= projectCount) revert ProjectDoesNotExist();
-        
-        Project memory project = projects[projectId];
         return (
-            project.id,
-            project.name,
-            project.capacity,
-            project.location,
-            project.totalInvestment,
-            project.currentInvestment,
-            project.status,
-            project.owner,
-            project.createdAt
+            projectsBase[projectId],
+            projectsFinancials[projectId],
+            projectsTechnical[projectId]
         );
     }
 
     function isKYCVerified(address investor) external view returns (bool) {
         return kycVerified[investor];
+    }
+
+    function getProjectToken(uint256 projectId) external view returns (address) {
+        if (projectId >= projectCount) revert ProjectDoesNotExist();
+        return projectsTechnical[projectId].tokenAddress;
     }
 }

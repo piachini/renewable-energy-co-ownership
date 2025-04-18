@@ -10,6 +10,7 @@ describe("RevenueDistributor", function () {
     let investor1;
     let investor2;
     let feeRecipient;
+    let projectOwner;
     let projectId;
 
     const PROJECT_NAME = "Solar Farm";
@@ -21,42 +22,56 @@ describe("RevenueDistributor", function () {
     const MIN_DISTRIBUTION_AMOUNT = ethers.parseEther("0.1");
 
     beforeEach(async function () {
-        [owner, investor1, investor2, feeRecipient] = await ethers.getSigners();
-
-        // Deploy AssetToken
-        const AssetToken = await ethers.getContractFactory("AssetToken");
-        assetToken = await AssetToken.deploy("Energy Asset Token", "EAT");
-        await assetToken.waitForDeployment();
-        await assetToken.setMinter(owner.address);
+        [owner, investor1, investor2, feeRecipient, projectOwner] = await ethers.getSigners();
 
         // Deploy ProjectRegistry
         const ProjectRegistry = await ethers.getContractFactory("ProjectRegistry");
         projectRegistry = await ProjectRegistry.deploy();
         await projectRegistry.waitForDeployment();
 
+        // Deploy AssetToken
+        const AssetToken = await ethers.getContractFactory("AssetToken");
+        assetToken = await AssetToken.deploy("Energy Asset Token", "EAT");
+        await assetToken.waitForDeployment();
+
         // Deploy RevenueDistributor
         const RevenueDistributor = await ethers.getContractFactory("RevenueDistributor");
         revenueDistributor = await RevenueDistributor.deploy(
-            await assetToken.getAddress(),
-            await projectRegistry.getAddress()
+            await projectRegistry.getAddress(),
+            await assetToken.getAddress()
         );
         await revenueDistributor.waitForDeployment();
 
+        // Set RevenueDistributor as minter for AssetToken
+        await assetToken.setMinter(await revenueDistributor.getAddress());
+
         // Create a project
-        await projectRegistry.registerProject(
+        await projectRegistry.connect(projectOwner).registerProject(
             PROJECT_NAME,
-            5000, // 5MW capacity
-            "Texas, USA"
+            PROJECT_DESCRIPTION,
+            TARGET_AMOUNT,
+            MIN_INVESTMENT,
+            MAX_INVESTMENT,
+            await assetToken.getAddress()
         );
         projectId = 0;
+
+        // Activate the project
+        await projectRegistry.connect(projectOwner).updateProjectStatus(projectId, 1); // Set to Active
 
         // Set up project fees and minimum distribution amount
         await revenueDistributor.setProjectFees(projectId, DISTRIBUTION_FEE, feeRecipient.address);
         await revenueDistributor.setMinDistributionAmount(projectId, MIN_DISTRIBUTION_AMOUNT);
 
+        // Set owner as minter for initial token distribution
+        await assetToken.setMinter(owner.address);
+        
         // Mint some tokens to investors
         await assetToken.mint(investor1.address, ethers.parseEther("50"));
         await assetToken.mint(investor2.address, ethers.parseEther("50"));
+        
+        // Reset minter to RevenueDistributor
+        await assetToken.setMinter(await revenueDistributor.getAddress());
     });
 
     describe("Initialization", function () {
@@ -100,26 +115,22 @@ describe("RevenueDistributor", function () {
         it("Should receive revenue correctly", async function () {
             const amount = ethers.parseEther("1");
             await expect(revenueDistributor.receiveRevenue(projectId, { value: amount }))
-                .to.emit(revenueDistributor, "RevenueReceived")
-                .withArgs(projectId, amount);
-
-            const distribution = await revenueDistributor.getDistribution(projectId, 0);
-            expect(distribution.amount).to.equal(amount);
-            expect(distribution.processed).to.be.false;
+                .to.emit(revenueDistributor, "RevenueDistributed")
+                .withArgs(0, projectId, amount);
         });
 
         it("Should not accept zero amount", async function () {
             await expect(
                 revenueDistributor.receiveRevenue(projectId, { value: 0 })
-            ).to.be.revertedWithCustomError(revenueDistributor, "InvalidAmount");
+            ).to.be.revertedWithCustomError(revenueDistributor, "NoRevenue");
         });
 
         it("Should calculate fees correctly", async function () {
             const amount = ethers.parseEther("1");
             await revenueDistributor.receiveRevenue(projectId, { value: amount });
-            const distribution = await revenueDistributor.getDistribution(projectId, 0);
-            const expectedFee = amount * BigInt(DISTRIBUTION_FEE) / BigInt(10000);
-            expect(distribution.feeAmount).to.equal(expectedFee);
+            const [, , amount_] = await revenueDistributor.getDistributionDetails(0);
+            const expectedAmount = amount - (amount * BigInt(DISTRIBUTION_FEE) / 10000n);
+            expect(amount_).to.equal(expectedAmount);
         });
     });
 
@@ -127,41 +138,22 @@ describe("RevenueDistributor", function () {
         beforeEach(async function () {
             // Add some revenue
             await revenueDistributor.receiveRevenue(projectId, { value: ethers.parseEther("1") });
+            // Verify KYC for investor1
+            await projectRegistry.connect(owner).verifyKYC(investor1.address);
         });
 
         it("Should process distribution correctly", async function () {
-            const initialFeeRecipientBalance = await ethers.provider.getBalance(feeRecipient.address);
-            
-            await revenueDistributor.processDistributions(projectId, 1);
-            
-            const distribution = await revenueDistributor.getDistribution(projectId, 0);
-            expect(distribution.processed).to.be.true;
-
-            const finalFeeRecipientBalance = await ethers.provider.getBalance(feeRecipient.address);
-            expect(finalFeeRecipientBalance - initialFeeRecipientBalance).to.equal(distribution.feeAmount);
+            const initialBalance = await ethers.provider.getBalance(investor1.address);
+            await revenueDistributor.connect(investor1).claimRevenue(0);
+            const finalBalance = await ethers.provider.getBalance(investor1.address);
+            expect(finalBalance - initialBalance).to.be.gt(0);
         });
 
-        it("Should not process distribution below minimum amount", async function () {
-            await revenueDistributor.setMinDistributionAmount(projectId, ethers.parseEther("2"));
-            await revenueDistributor.processDistributions(projectId, 1);
-            
-            const distribution = await revenueDistributor.getDistribution(projectId, 0);
-            expect(distribution.processed).to.be.false;
-        });
-
-        it("Should process multiple distributions", async function () {
-            await revenueDistributor.receiveRevenue(projectId, { value: ethers.parseEther("1") });
-            await revenueDistributor.processDistributions(projectId, 2);
-            
-            const distribution1 = await revenueDistributor.getDistribution(projectId, 0);
-            const distribution2 = await revenueDistributor.getDistribution(projectId, 1);
-            expect(distribution1.processed).to.be.true;
-            expect(distribution2.processed).to.be.true;
-        });
-
-        it("Should update lastProcessedIndex correctly", async function () {
-            await revenueDistributor.processDistributions(projectId, 1);
-            expect(await revenueDistributor.lastProcessedIndex(projectId)).to.equal(1);
+        it("Should not allow double claiming", async function () {
+            await revenueDistributor.connect(investor1).claimRevenue(0);
+            await expect(
+                revenueDistributor.connect(investor1).claimRevenue(0)
+            ).to.be.revertedWithCustomError(revenueDistributor, "AlreadyClaimed");
         });
     });
 
@@ -170,42 +162,35 @@ describe("RevenueDistributor", function () {
             // Add multiple distributions
             await revenueDistributor.receiveRevenue(projectId, { value: ethers.parseEther("1") });
             await revenueDistributor.receiveRevenue(projectId, { value: ethers.parseEther("1") });
+            // Verify KYC for investor1
+            await projectRegistry.connect(owner).verifyKYC(investor1.address);
         });
 
-        it("Should track pending distributions correctly", async function () {
-            expect(await revenueDistributor.getPendingDistributionsCount(projectId)).to.equal(2);
-            
-            await revenueDistributor.processDistributions(projectId, 1);
-            expect(await revenueDistributor.getPendingDistributionsCount(projectId)).to.equal(1);
+        it("Should track distributions correctly", async function () {
+            const [id, projectId_, amount] = await revenueDistributor.getDistributionDetails(0);
+            expect(id).to.equal(0);
+            expect(projectId_).to.equal(projectId);
+            expect(amount).to.be.gt(0);
         });
 
-        it("Should return correct distribution details", async function () {
-            const amount = ethers.parseEther("1");
-            const distribution = await revenueDistributor.getDistribution(projectId, 0);
-            
-            expect(distribution.amount).to.equal(amount);
-            expect(distribution.projectId).to.equal(projectId);
-            expect(distribution.processed).to.be.false;
+        it("Should track claims correctly", async function () {
+            expect(await revenueDistributor.hasClaimedRevenue(0, investor1.address)).to.be.false;
+            await revenueDistributor.connect(investor1).claimRevenue(0);
+            expect(await revenueDistributor.hasClaimedRevenue(0, investor1.address)).to.be.true;
         });
     });
 
     describe("Pause Functionality", function () {
         it("Should not allow operations when paused", async function () {
             await revenueDistributor.pause();
-            
             await expect(
                 revenueDistributor.receiveRevenue(projectId, { value: ethers.parseEther("1") })
-            ).to.be.revertedWith("Pausable: paused");
-            
-            await expect(
-                revenueDistributor.processDistributions(projectId, 1)
             ).to.be.revertedWith("Pausable: paused");
         });
 
         it("Should allow operations after unpause", async function () {
             await revenueDistributor.pause();
             await revenueDistributor.unpause();
-            
             await expect(
                 revenueDistributor.receiveRevenue(projectId, { value: ethers.parseEther("1") })
             ).to.not.be.reverted;
@@ -229,10 +214,14 @@ describe("RevenueDistributor", function () {
             const amount = ethers.parseEther("1");
             await revenueDistributor.receiveRevenue(projectId, { value: amount });
             
-            // Try to process distributions recursively (should fail)
+            // Try to claim revenue recursively
+            const AttackContract = await ethers.getContractFactory("ReentrancyAttacker");
+            const attackContract = await AttackContract.deploy(await revenueDistributor.getAddress());
+            
+            // Il contratto di attacco tenterà di reclamare i ricavi senza essere verificato KYC
             await expect(
-                revenueDistributor.processDistributions(projectId, 1)
-            ).to.not.be.revertedWith("ReentrancyGuard: reentrant call");
+                attackContract.attack(0, { value: amount })
+            ).to.be.revertedWithCustomError(revenueDistributor, "InvestorNotVerified");
         });
     });
 }); 

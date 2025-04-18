@@ -1,203 +1,265 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { expectRevertWithError } = require("./helpers/assertions");
 
 describe("ProjectRegistry", function () {
-  let ProjectRegistry;
-  let registry;
+  let projectRegistry;
   let owner;
-  let addr1;
-  let addr2;
-  let timestamp;
-
+  let projectOwner;
+  let investor;
+  let tokenAddress;
+  
+  const PROJECT_NAME = "Impianto Solare Roma";
+  const PROJECT_DESCRIPTION = "Impianto fotovoltaico da 500kW";
+  const TARGET_AMOUNT = ethers.parseEther("1000");
+  const MIN_INVESTMENT = ethers.parseEther("0.1");
+  const MAX_INVESTMENT = ethers.parseEther("100");
+  
   beforeEach(async function () {
-    [owner, addr1, addr2] = await ethers.getSigners();
-    ProjectRegistry = await ethers.getContractFactory("ProjectRegistry");
-    registry = await ProjectRegistry.deploy();
-    await registry.waitForDeployment();
-    timestamp = Math.floor(Date.now() / 1000);
+    [owner, projectOwner, investor, tokenAddress] = await ethers.getSigners();
+    
+    const ProjectRegistry = await ethers.getContractFactory("ProjectRegistry");
+    projectRegistry = await ProjectRegistry.deploy();
+    await projectRegistry.waitForDeployment();
   });
-
-  describe("Deployment", function () {
-    it("Should set the right owner", async function () {
-      expect(await registry.owner()).to.equal(owner.address);
+  
+  describe("Inizializzazione", function () {
+    it("dovrebbe impostare il proprietario corretto", async function () {
+      expect(await projectRegistry.owner()).to.equal(owner.address);
     });
-
-    it("Should start with zero projects", async function () {
-      expect(await registry.projectCount()).to.equal(0);
-    });
-  });
-
-  describe("Project Registration", function () {
-    const validProject = {
-      name: "Solar Farm Alpha",
-      capacity: 1000,
-      location: "Texas, USA"
-    };
-
-    it("Should register a new project with valid parameters", async function () {
-      await expect(registry.registerProject(validProject.name, validProject.capacity, validProject.location))
-        .to.emit(registry, "ProjectRegistered")
-        .withArgs(0, validProject.name, owner.address);
-
-      const project = await registry.getProjectDetails(0);
-      expect(project.name).to.equal(validProject.name);
-      expect(project.capacity).to.equal(validProject.capacity);
-      expect(project.location).to.equal(validProject.location);
-      expect(project.owner).to.equal(owner.address);
-      expect(project.status).to.equal(0); // Pending
-    });
-
-    it("Should increment project count after registration", async function () {
-      await registry.registerProject(validProject.name, validProject.capacity, validProject.location);
-      expect(await registry.projectCount()).to.equal(1);
-    });
-
-    it("Should revert when registering with empty name", async function () {
-      await expect(
-        registry.registerProject("", validProject.capacity, validProject.location)
-      ).to.be.revertedWithCustomError(registry, "EmptyName");
-    });
-
-    it("Should revert when registering with empty location", async function () {
-      await expect(
-        registry.registerProject(validProject.name, validProject.capacity, "")
-      ).to.be.revertedWithCustomError(registry, "EmptyLocation");
-    });
-
-    it("Should revert when registering with zero capacity", async function () {
-      await expect(
-        registry.registerProject(validProject.name, 0, validProject.location)
-      ).to.be.revertedWithCustomError(registry, "ZeroCapacity");
-    });
-
-    it("Should not allow registration when paused", async function () {
-      await registry.pause();
-      await expect(
-        registry.registerProject(validProject.name, validProject.capacity, validProject.location)
-      ).to.be.revertedWith("Pausable: paused");
+    
+    it("dovrebbe inizializzare con projectCount a 0", async function () {
+      expect(await projectRegistry.projectCount()).to.equal(0);
     });
   });
-
-  describe("Project Status Updates", function () {
+  
+  describe("Registrazione Progetto", function () {
+    it("dovrebbe registrare un nuovo progetto correttamente", async function () {
+      await expect(projectRegistry.connect(projectOwner).registerProject(
+        PROJECT_NAME,
+        PROJECT_DESCRIPTION,
+        TARGET_AMOUNT,
+        MIN_INVESTMENT,
+        MAX_INVESTMENT,
+        tokenAddress.address
+      )).to.emit(projectRegistry, "ProjectRegistered")
+        .withArgs(0, PROJECT_NAME, projectOwner.address);
+      
+      const projectDetails = await projectRegistry.getProjectDetails(0);
+      expect(projectDetails.base.name).to.equal(PROJECT_NAME);
+      expect(projectDetails.base.description).to.equal(PROJECT_DESCRIPTION);
+      expect(projectDetails.base.owner).to.equal(projectOwner.address);
+      expect(projectDetails.base.status).to.equal(0); // ProjectStatus.Pending
+      
+      expect(projectDetails.financials.targetAmount).to.equal(TARGET_AMOUNT);
+      expect(projectDetails.financials.minInvestment).to.equal(MIN_INVESTMENT);
+      expect(projectDetails.financials.maxInvestment).to.equal(MAX_INVESTMENT);
+      
+      expect(projectDetails.technical.tokenAddress).to.equal(tokenAddress.address);
+    });
+    
+    it("dovrebbe fallire con nome vuoto", async function () {
+      await expectRevertWithError(
+        projectRegistry.connect(projectOwner).registerProject(
+          "",
+          PROJECT_DESCRIPTION,
+          TARGET_AMOUNT,
+          MIN_INVESTMENT,
+          MAX_INVESTMENT,
+          tokenAddress.address
+        ),
+        "EmptyName"
+      );
+    });
+    
+    it("dovrebbe fallire con descrizione vuota", async function () {
+      await expectRevertWithError(
+        projectRegistry.connect(projectOwner).registerProject(
+          PROJECT_NAME,
+          "",
+          TARGET_AMOUNT,
+          MIN_INVESTMENT,
+          MAX_INVESTMENT,
+          tokenAddress.address
+        ),
+        "EmptyName"
+      );
+    });
+    
+    it("dovrebbe fallire con targetAmount zero", async function () {
+      await expectRevertWithError(
+        projectRegistry.connect(projectOwner).registerProject(
+          PROJECT_NAME,
+          PROJECT_DESCRIPTION,
+          0,
+          MIN_INVESTMENT,
+          MAX_INVESTMENT,
+          tokenAddress.address
+        ),
+        "ZeroCapacity"
+      );
+    });
+    
+    it("dovrebbe fallire con limiti di investimento invalidi", async function () {
+      await expectRevertWithError(
+        projectRegistry.connect(projectOwner).registerProject(
+          PROJECT_NAME,
+          PROJECT_DESCRIPTION,
+          TARGET_AMOUNT,
+          0,
+          MAX_INVESTMENT,
+          tokenAddress.address
+        ),
+        "InvalidInvestmentLimits"
+      );
+      
+      await expectRevertWithError(
+        projectRegistry.connect(projectOwner).registerProject(
+          PROJECT_NAME,
+          PROJECT_DESCRIPTION,
+          TARGET_AMOUNT,
+          MAX_INVESTMENT,
+          MIN_INVESTMENT,
+          tokenAddress.address
+        ),
+        "InvalidInvestmentLimits"
+      );
+    });
+  });
+  
+  describe("Gestione Stato Progetto", function () {
     beforeEach(async function () {
-      await registry.registerProject("Test Project", 1000, "Test Location");
+      await projectRegistry.connect(projectOwner).registerProject(
+        PROJECT_NAME,
+        PROJECT_DESCRIPTION,
+        TARGET_AMOUNT,
+        MIN_INVESTMENT,
+        MAX_INVESTMENT,
+        tokenAddress.address
+      );
     });
-
-    it("Should allow owner to update project status", async function () {
-      await expect(registry.updateProjectStatus(0, 1))
-        .to.emit(registry, "ProjectStatusUpdated")
+    
+    it("dovrebbe permettere al proprietario di aggiornare lo stato", async function () {
+      await expect(projectRegistry.connect(projectOwner).updateProjectStatus(0, 1))
+        .to.emit(projectRegistry, "ProjectStatusUpdated")
         .withArgs(0, 1);
-
-      const project = await registry.getProjectDetails(0);
-      expect(project.status).to.equal(1); // Active
+        
+      const projectDetails = await projectRegistry.getProjectDetails(0);
+      expect(projectDetails.base.status).to.equal(1); // ProjectStatus.Active
     });
-
-    it("Should not allow non-owner to update project status", async function () {
-      await expect(
-        registry.connect(addr1).updateProjectStatus(0, 1)
-      ).to.be.revertedWith("Not project owner");
+    
+    it("dovrebbe fallire se chiamato da non proprietario", async function () {
+      await expectRevertWithError(
+        projectRegistry.connect(investor).updateProjectStatus(0, 1),
+        "InvalidAddress"
+      );
     });
-
-    it("Should revert when updating non-existent project", async function () {
-      await expect(
-        registry.updateProjectStatus(99, 1)
-      ).to.be.revertedWithCustomError(registry, "ProjectDoesNotExist");
+    
+    it("dovrebbe fallire con stato invalido", async function () {
+      await expectRevertWithError(
+        projectRegistry.connect(projectOwner).updateProjectStatus(0, 4),
+        "InvalidStatus"
+      );
     });
-
-    it("Should revert when setting invalid status", async function () {
-      await expect(
-        registry.updateProjectStatus(0, 4)
-      ).to.be.revertedWithCustomError(registry, "InvalidStatus");
-    });
-
-    it("Should not allow updating completed projects", async function () {
-      await registry.updateProjectStatus(0, 2); // Set to Completed
-      await expect(
-        registry.updateProjectStatus(0, 1)
-      ).to.be.revertedWithCustomError(registry, "ProjectCompleted");
-    });
-
-    it("Should not allow updating cancelled projects", async function () {
-      await registry.updateProjectStatus(0, 3); // Set to Cancelled
-      await expect(
-        registry.updateProjectStatus(0, 1)
-      ).to.be.revertedWith("Project cancelled");
+    
+    it("dovrebbe fallire per progetti completati", async function () {
+      await projectRegistry.connect(projectOwner).updateProjectStatus(0, 2); // Completed
+      await expectRevertWithError(
+        projectRegistry.connect(projectOwner).updateProjectStatus(0, 1),
+        "ProjectCompleted"
+      );
     });
   });
-
-  describe("KYC Verification", function () {
-    it("Should allow owner to verify KYC", async function () {
-      await expect(registry.verifyKYC(addr1.address))
-        .to.emit(registry, "KYCVerified")
-        .withArgs(addr1.address);
-
-      expect(await registry.isKYCVerified(addr1.address)).to.be.true;
+  
+  describe("Verifica KYC", function () {
+    it("dovrebbe permettere al proprietario di verificare un investitore", async function () {
+      await expect(projectRegistry.connect(owner).verifyKYC(investor.address))
+        .to.emit(projectRegistry, "KYCVerified")
+        .withArgs(investor.address);
+        
+      expect(await projectRegistry.isKYCVerified(investor.address)).to.be.true;
     });
-
-    it("Should not allow non-owner to verify KYC", async function () {
-      await expect(
-        registry.connect(addr1).verifyKYC(addr2.address)
-      ).to.be.revertedWith("Ownable: caller is not the owner");
+    
+    it("dovrebbe fallire se chiamato da non proprietario", async function () {
+      await expectRevertWithError(
+        projectRegistry.connect(investor).verifyKYC(investor.address),
+        "Ownable: caller is not the owner"
+      );
     });
-
-    it("Should revert when verifying zero address", async function () {
-      await expect(
-        registry.verifyKYC(ethers.ZeroAddress)
-      ).to.be.revertedWithCustomError(registry, "InvalidAddress");
+    
+    it("dovrebbe fallire per indirizzo zero", async function () {
+      await expectRevertWithError(
+        projectRegistry.connect(owner).verifyKYC(ethers.ZeroAddress),
+        "InvalidAddress"
+      );
     });
-
-    it("Should revert when verifying already verified address", async function () {
-      await registry.verifyKYC(addr1.address);
-      await expect(
-        registry.verifyKYC(addr1.address)
-      ).to.be.revertedWithCustomError(registry, "AlreadyVerified");
+    
+    it("dovrebbe fallire per investitore già verificato", async function () {
+      await projectRegistry.connect(owner).verifyKYC(investor.address);
+      await expectRevertWithError(
+        projectRegistry.connect(owner).verifyKYC(investor.address),
+        "AlreadyVerified"
+      );
     });
   });
-
-  describe("Project Details", function () {
+  
+  describe("Funzioni di Lettura", function () {
     beforeEach(async function () {
-      await registry.registerProject("Test Project", 1000, "Test Location");
+      await projectRegistry.connect(projectOwner).registerProject(
+        PROJECT_NAME,
+        PROJECT_DESCRIPTION,
+        TARGET_AMOUNT,
+        MIN_INVESTMENT,
+        MAX_INVESTMENT,
+        tokenAddress.address
+      );
     });
-
-    it("Should return correct project details", async function () {
-      const project = await registry.getProjectDetails(0);
-      expect(project.id).to.equal(0);
-      expect(project.name).to.equal("Test Project");
-      expect(project.capacity).to.equal(1000);
-      expect(project.location).to.equal("Test Location");
-      expect(project.totalInvestment).to.equal(0);
-      expect(project.currentInvestment).to.equal(0);
-      expect(project.status).to.equal(0);
-      expect(project.owner).to.equal(owner.address);
+    
+    it("dovrebbe restituire i dettagli corretti del progetto", async function () {
+      const projectDetails = await projectRegistry.getProjectDetails(0);
+      expect(projectDetails.base.name).to.equal(PROJECT_NAME);
+      expect(projectDetails.base.owner).to.equal(projectOwner.address);
+      expect(projectDetails.financials.targetAmount).to.equal(TARGET_AMOUNT);
+      expect(projectDetails.technical.tokenAddress).to.equal(tokenAddress.address);
     });
-
-    it("Should revert when querying non-existent project", async function () {
-      await expect(
-        registry.getProjectDetails(99)
-      ).to.be.revertedWithCustomError(registry, "ProjectDoesNotExist");
+    
+    it("dovrebbe fallire per progetto inesistente", async function () {
+      await expectRevertWithError(
+        projectRegistry.getProjectDetails(99),
+        "ProjectDoesNotExist"
+      );
+    });
+    
+    it("dovrebbe restituire l'indirizzo del token corretto", async function () {
+      expect(await projectRegistry.getProjectToken(0)).to.equal(tokenAddress.address);
     });
   });
-
-  describe("Pause/Unpause", function () {
-    it("Should allow owner to pause and unpause", async function () {
-      await registry.pause();
-      expect(await registry.paused()).to.be.true;
-
-      await registry.unpause();
-      expect(await registry.paused()).to.be.false;
+  
+  describe("Pausa", function () {
+    it("dovrebbe permettere al proprietario di mettere in pausa", async function () {
+      await projectRegistry.connect(owner).pause();
+      expect(await projectRegistry.paused()).to.be.true;
     });
-
-    it("Should not allow non-owner to pause", async function () {
-      await expect(
-        registry.connect(addr1).pause()
-      ).to.be.revertedWith("Ownable: caller is not the owner");
+    
+    it("dovrebbe permettere al proprietario di riprendere", async function () {
+      await projectRegistry.connect(owner).pause();
+      await projectRegistry.connect(owner).unpause();
+      expect(await projectRegistry.paused()).to.be.false;
     });
-
-    it("Should not allow non-owner to unpause", async function () {
-      await registry.pause();
-      await expect(
-        registry.connect(addr1).unpause()
-      ).to.be.revertedWith("Ownable: caller is not the owner");
+    
+    it("dovrebbe impedire la registrazione quando in pausa", async function () {
+      await projectRegistry.connect(owner).pause();
+      await expectRevertWithError(
+        projectRegistry.connect(projectOwner).registerProject(
+          PROJECT_NAME,
+          PROJECT_DESCRIPTION,
+          TARGET_AMOUNT,
+          MIN_INVESTMENT,
+          MAX_INVESTMENT,
+          tokenAddress.address
+        ),
+        "Pausable: paused"
+      );
     });
   });
 }); 
