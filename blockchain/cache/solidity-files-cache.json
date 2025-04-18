@@ -812,8 +812,8 @@
       ]
     },
     "/Users/PL/Projects/Energy Asset Blockchain/blockchain/contracts/test/ReentrancyAttacker.sol": {
-      "lastModificationDate": 1744981367955,
-      "contentHash": "d6a8a0e8e0bdb544cd1fa2f18a61810c",
+      "lastModificationDate": 1744983989380,
+      "contentHash": "e4132c2c217f5e71f299e274d7e5d5c0",
       "sourceName": "contracts/test/ReentrancyAttacker.sol",
       "solcConfig": {
         "version": "0.8.20",
@@ -849,10 +849,10 @@
         "ReentrancyAttacker"
       ]
     },
-    "/Users/PL/Projects/Energy Asset Blockchain/blockchain/contracts/test/ReentrancyAttack.sol": {
-      "lastModificationDate": 1744981948906,
-      "contentHash": "792ba5dc9d89799acd9976c9d8805000",
-      "sourceName": "contracts/test/ReentrancyAttack.sol",
+    "/Users/PL/Projects/Energy Asset Blockchain/blockchain/contracts/Monitoring.sol": {
+      "lastModificationDate": 1744984558138,
+      "contentHash": "4c0893672e390a90900b031651271dad",
+      "sourceName": "contracts/Monitoring.sol",
       "solcConfig": {
         "version": "0.8.20",
         "settings": {
@@ -878,13 +878,15 @@
         }
       },
       "imports": [
-        "../RevenueDistributor.sol"
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/security/Pausable.sol",
+        "./ProjectRegistry.sol"
       ],
       "versionPragmas": [
         "^0.8.19"
       ],
       "artifacts": [
-        "ReentrancyAttack"
+        "Monitoring"
       ]
     }
   }
