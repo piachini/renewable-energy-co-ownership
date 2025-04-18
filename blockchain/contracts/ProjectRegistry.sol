@@ -44,12 +44,14 @@ contract ProjectRegistry is Ownable, Pausable {
     event ProjectRegistered(uint256 indexed projectId, string name, address owner);
     event ProjectStatusUpdated(uint256 indexed projectId, ProjectStatus status);
     event KYCVerified(address indexed investor);
+    event KYCRevoked(address indexed investor);
 
     error ProjectDoesNotExist();
     error InvalidStatus();
     error ProjectCompleted();
     error InvalidAddress();
     error AlreadyVerified();
+    error NotVerified();
     error EmptyName();
     error EmptyLocation();
     error ZeroCapacity();
@@ -125,6 +127,14 @@ contract ProjectRegistry is Ownable, Pausable {
         
         kycVerified[investor] = true;
         emit KYCVerified(investor);
+    }
+
+    function revokeKYC(address investor) external onlyOwner {
+        if (investor == address(0)) revert InvalidAddress();
+        if (!kycVerified[investor]) revert NotVerified();
+        
+        kycVerified[investor] = false;
+        emit KYCRevoked(investor);
     }
 
     function getProjectDetails(uint256 projectId) external view returns (

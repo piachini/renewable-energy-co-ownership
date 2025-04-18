@@ -85,7 +85,7 @@ describe("InvestmentManager", function () {
     it("should fail if project does not exist", async function () {
       await expectRevertWithError(
         investmentManager.connect(investor).makeInvestment(99, { value: INVESTMENT_AMOUNT }),
-        "ProjectNotFound"
+        "ProjectDoesNotExist"
       );
     });
     
@@ -156,7 +156,7 @@ describe("InvestmentManager", function () {
     it("should fail if project does not exist", async function () {
       await expectRevertWithError(
         investmentManager.connect(investor).withdrawInvestment(99, INVESTMENT_AMOUNT),
-        "ProjectNotFound"
+        "ProjectDoesNotExist"
       );
     });
   });
