@@ -141,7 +141,7 @@ contract RevenueAutomation is Ownable, Pausable, ReentrancyGuard {
         if (totalAmount == 0) revert NoRevenue();
 
         // Claim revenue for the investor
-        revenueDistributor.claimRevenue(distributionId);
+        revenueDistributor.claimRevenueFor(distributionId, investor);
         
         // Calculate amounts based on investor's share
         uint256 reinvestAmount = (totalAmount * projectAutomation[projectId].reinvestPercentage) / 10000;

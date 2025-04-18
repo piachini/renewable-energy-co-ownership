@@ -69,7 +69,8 @@ describe("RevenueAutomation", function () {
         await projectRegistry.connect(projectOwner).updateProjectStatus(projectId, 1); // Set to Active
 
         // Transfer project ownership to RevenueAutomation
-        await projectRegistry.connect(projectOwner).transferProjectOwnership(projectId, await revenueAutomation.getAddress());
+        const revenueAutomationAddress = await revenueAutomation.getAddress();
+        await projectRegistry.connect(projectOwner).transferProjectOwnership(projectId, revenueAutomationAddress);
 
         // Set up automation configuration
         await revenueAutomation.configureAutomation(
@@ -194,21 +195,14 @@ describe("RevenueAutomation", function () {
 
     describe("Auto Reinvestment", function () {
         beforeEach(async function () {
-            // Send some revenue and process distribution
-            await revenueDistributor.connect(projectOwner).receiveRevenue(projectId, {
+            // Send revenue through receiveRevenue
+            await revenueDistributor.connect(owner).receiveRevenue(projectId, {
                 value: ethers.parseEther("10")
             });
-            await revenueAutomation.executeAutoDistribution(projectId);
-            await time.increase(DISTRIBUTION_INTERVAL + 1);
-
-            // Approve RevenueAutomation to handle funds
+            
+            // Approve RevenueAutomation as claimer
             await revenueDistributor.connect(investor1).approve(await revenueAutomation.getAddress(), true);
-
-            // Send ETH to RevenueAutomation for transfers
-            await owner.sendTransaction({
-                to: await revenueAutomation.getAddress(),
-                value: ethers.parseEther("10")
-            });
+            await revenueDistributor.connect(investor2).approve(await revenueAutomation.getAddress(), true);
         });
 
         it("Should execute auto reinvestment", async function () {
